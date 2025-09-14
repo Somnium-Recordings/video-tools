@@ -1,0 +1,417 @@
+#!/usr/bin/env tsx
+
+import { execSync } from "child_process";
+import path from "path";
+import fs from "fs";
+
+interface LTCFrame {
+  userBits: string;
+  timecode: string;
+  position: string;
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  frame: number;
+  dropFrame: boolean;
+}
+
+interface AudioFileInfo {
+  filename: string;
+  timeReference?: string;
+  creationTime?: string;
+  duration?: string;
+}
+
+class LTCSyncTool {
+  private sourceFile: string;
+  private siblingFiles: string[] = [];
+
+  constructor(sourceFile: string) {
+    this.sourceFile = path.resolve(sourceFile);
+    this.findSiblingFiles();
+  }
+
+  private findSiblingFiles(): void {
+    const dir = path.dirname(this.sourceFile);
+    const baseName = path.basename(
+      this.sourceFile,
+      path.extname(this.sourceFile)
+    );
+
+    // Find files with similar base names (before the last part)
+    const files = fs.readdirSync(dir).filter((file) => {
+      const ext = path.extname(file).toLowerCase();
+      return ext === ".wav" && file !== path.basename(this.sourceFile);
+    });
+
+    // Filter for sibling files (same base name pattern)
+    this.siblingFiles = files
+      .map((file) => path.join(dir, file))
+      .filter((file) => {
+        const fileBaseName = path.basename(file, path.extname(file));
+        // Check if it's a sibling (similar naming pattern)
+        return this.isSiblingFile(baseName, fileBaseName);
+      });
+
+    console.log(
+      `Found ${this.siblingFiles.length} sibling files:`,
+      this.siblingFiles.map((f) => path.basename(f))
+    );
+  }
+
+  private isSiblingFile(sourceBase: string, targetBase: string): boolean {
+    // For files like "250913_0009_1-2" and "250913_0009_3",
+    // they should be considered siblings if they share the same prefix pattern
+
+    // Split by underscore to get parts
+    const sourceParts = sourceBase.split("_");
+    const targetParts = targetBase.split("_");
+
+    if (sourceParts.length < 3 || targetParts.length < 3) return false;
+
+    // Check if they share the same first two parts (date and sequence)
+    const sourcePrefix = sourceParts.slice(0, 2).join("_");
+    const targetPrefix = targetParts.slice(0, 2).join("_");
+
+    return sourcePrefix === targetPrefix;
+  }
+
+  private runLTCdump(): LTCFrame[] {
+    console.log(
+      `\n🔍 Extracting LTC timecode from: ${path.basename(this.sourceFile)}`
+    );
+
+    try {
+      const output = execSync(`ltcdump "${this.sourceFile}" -vv`, {
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+      });
+
+      const lines = output
+        .split("\n")
+        .filter(
+          (line) =>
+            line.trim() &&
+            !line.startsWith("#") &&
+            !line.includes("DISCONTINUITY")
+        );
+
+      if (lines.length === 0) {
+        throw new Error("No LTC frames found in the source file");
+      }
+
+      const frames: LTCFrame[] = [];
+
+      for (const line of lines) {
+        const frame = this.parseLTCFrame(line);
+        if (frame) {
+          frames.push(frame);
+        }
+      }
+
+      console.log(`✅ Found ${frames.length} LTC frames`);
+      return frames;
+    } catch (error) {
+      console.error(`❌ Error running ltcdump: ${error}`);
+      throw error;
+    }
+  }
+
+  private parseLTCFrame(line: string): LTCFrame | null {
+    try {
+      // Format: "ce410081   30:04:00.16 |  2660708  2662667 R"
+      const parts = line.trim().split("|");
+      if (parts.length !== 2) return null;
+
+      const leftPart = parts[0].trim();
+      const rightPart = parts[1].trim();
+
+      // Parse left part: user bits and timecode
+      const leftParts = leftPart.split(/\s+/);
+      const userBits = leftParts[0];
+      const timecode = leftParts.slice(1).join(" ");
+
+      // Parse user bits (YYMMDDXX format for date)
+      if (userBits.length !== 8) return null;
+
+      // Parse user bits as date in YYMMDDXX format
+      let year = parseInt("20" + userBits.substring(0, 2));
+      let month = parseInt(userBits.substring(2, 4));
+      let day = parseInt(userBits.substring(4, 6));
+
+      // Validate the parsed date
+      if (month < 1 || month > 12 || day < 1 || day > 31) {
+        console.warn(
+          `⚠️  Invalid date in user bits ${userBits}, using current date`
+        );
+        const now = new Date();
+        year = now.getFullYear();
+        month = now.getMonth() + 1;
+        day = now.getDate();
+      }
+
+      // Parse timecode (HH:MM:SS.FF or HH:MM:SS:FF)
+      const timecodeMatch = timecode.match(
+        /(\d{2}):(\d{2}):(\d{2})[.:](\d{2})/
+      );
+      if (!timecodeMatch) return null;
+
+      let hour = parseInt(timecodeMatch[1]);
+      const minute = parseInt(timecodeMatch[2]);
+      const second = parseInt(timecodeMatch[3]);
+      const frame = parseInt(timecodeMatch[4]);
+      const dropFrame = timecode.includes(".");
+
+      // Validate and correct invalid timecode values
+      if (hour >= 24) {
+        console.warn(
+          `⚠️  Invalid hour ${hour} in timecode, correcting to ${hour % 24}`
+        );
+        hour = hour % 24;
+      }
+
+      if (minute >= 60) {
+        console.warn(
+          `⚠️  Invalid minute ${minute} in timecode, correcting to ${
+            minute % 60
+          }`
+        );
+      }
+
+      if (second >= 60) {
+        console.warn(
+          `⚠️  Invalid second ${second} in timecode, correcting to ${
+            second % 60
+          }`
+        );
+      }
+
+      return {
+        userBits,
+        timecode,
+        position: rightPart.split(/\s+/)[0] || "0",
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second,
+        frame,
+        dropFrame,
+      };
+    } catch (error) {
+      console.warn(`⚠️  Failed to parse LTC frame: ${line}`);
+      return null;
+    }
+  }
+
+  private getFirstValidFrame(frames: LTCFrame[]): LTCFrame {
+    if (frames.length === 0) {
+      throw new Error("No valid LTC frames found");
+    }
+
+    // Use the first frame as reference
+    const frame = frames[0];
+    console.log(
+      `📅 Using reference frame: ${frame.timecode} (${frame.year}-${frame.month
+        .toString()
+        .padStart(2, "0")}-${frame.day.toString().padStart(2, "0")})`
+    );
+    return frame;
+  }
+
+  private calculateTimeReference(frame: LTCFrame): number {
+    // Convert timecode to samples at 48kHz
+    const frameRate = frame.dropFrame ? 29.97 : 30;
+    const totalFrames =
+      (frame.hour * 3600 + frame.minute * 60 + frame.second) * frameRate +
+      frame.frame;
+    const samples = Math.round((totalFrames * 48000) / frameRate);
+
+    console.log(
+      `🎯 Calculated time reference: ${samples} samples (${frameRate}fps)`
+    );
+    return samples;
+  }
+
+  private formatCreationTime(frame: LTCFrame): string {
+    // Format as HH:MM:SS (8 characters max for OriginationTime)
+    const timeString = `${frame.hour.toString().padStart(2, "0")}:${frame.minute
+      .toString()
+      .padStart(2, "0")}:${frame.second.toString().padStart(2, "0")}`;
+    console.log(`🕐 Formatted creation time: ${timeString}`);
+    return timeString;
+  }
+
+  private updateFileMetadata(
+    filePath: string,
+    timeReference: number,
+    creationTime: string,
+    frame: LTCFrame
+  ): void {
+    console.log(`\n📝 Updating metadata for: ${path.basename(filePath)}`);
+
+    try {
+      // Format date as YYYY-MM-DD for OriginationDate
+      const originationDate = `${frame.year}-${frame.month
+        .toString()
+        .padStart(2, "0")}-${frame.day.toString().padStart(2, "0")}`;
+
+      // Use bwfmetaedit to update the metadata
+      const commands = [
+        `--Timereference=${timeReference}`,
+        `--OriginationTime="${creationTime}"`,
+        `--OriginationDate="${originationDate}"`,
+      ];
+
+      const command = `bwfmetaedit ${commands.join(" ")} "${filePath}"`;
+      console.log(`Running: ${command}`);
+
+      execSync(command, { stdio: "pipe" });
+      console.log(`✅ Successfully updated metadata`);
+    } catch (error) {
+      console.error(
+        `❌ Error updating metadata for ${path.basename(filePath)}: ${error}`
+      );
+      throw error;
+    }
+  }
+
+  private verifyFileMetadata(filePath: string): AudioFileInfo {
+    console.log(`\n🔍 Verifying metadata for: ${path.basename(filePath)}`);
+
+    try {
+      const output = execSync(`ffprobe -v quiet -show_format "${filePath}"`, {
+        encoding: "utf8",
+      });
+
+      const info: AudioFileInfo = { filename: path.basename(filePath) };
+
+      // Parse ffprobe output
+      const lines = output.split("\n");
+      for (const line of lines) {
+        if (line.startsWith("TAG:time_reference=")) {
+          info.timeReference = line.split("=")[1];
+        } else if (line.startsWith("TAG:creation_time=")) {
+          info.creationTime = line.split("=")[1];
+        } else if (line.startsWith("duration=")) {
+          info.duration = line.split("=")[1];
+        }
+      }
+
+      console.log(`📊 Current metadata:`);
+      console.log(`   Time Reference: ${info.timeReference || "Not set"}`);
+      console.log(`   Creation Time: ${info.creationTime || "Not set"}`);
+      console.log(`   Duration: ${info.duration || "Unknown"}`);
+
+      return info;
+    } catch (error) {
+      console.error(`❌ Error verifying metadata: ${error}`);
+      throw error;
+    }
+  }
+
+  public async syncTimecode(): Promise<void> {
+    console.log(`🚀 Starting LTC timecode synchronization`);
+    console.log(`📁 Source file: ${this.sourceFile}`);
+    console.log(`📁 Sibling files: ${this.siblingFiles.length}`);
+
+    if (this.siblingFiles.length === 0) {
+      console.log("⚠️  No sibling files found to update");
+      return;
+    }
+
+    try {
+      // Extract LTC data from source file
+      const frames = this.runLTCdump();
+      const referenceFrame = this.getFirstValidFrame(frames);
+
+      // Calculate metadata values
+      const timeReference = this.calculateTimeReference(referenceFrame);
+      const creationTime = this.formatCreationTime(referenceFrame);
+
+      // Update each sibling file
+      for (const filePath of this.siblingFiles) {
+        try {
+          // Show current metadata
+          this.verifyFileMetadata(filePath);
+
+          // Update metadata
+          this.updateFileMetadata(
+            filePath,
+            timeReference,
+            creationTime,
+            referenceFrame
+          );
+
+          // Verify the update
+          this.verifyFileMetadata(filePath);
+        } catch (error) {
+          console.error(
+            `❌ Failed to process ${path.basename(filePath)}: ${error}`
+          );
+          // Continue with other files
+        }
+      }
+
+      console.log(`\n🎉 LTC timecode synchronization completed!`);
+      console.log(`📊 Updated ${this.siblingFiles.length} files with:`);
+      console.log(`   Time Reference: ${timeReference}`);
+      console.log(`   Creation Time: ${creationTime}`);
+    } catch (error) {
+      console.error(`❌ Synchronization failed: ${error}`);
+      process.exit(1);
+    }
+  }
+}
+
+// CLI interface
+function main() {
+  const args = process.argv.slice(2);
+
+  if (args.length === 0) {
+    console.log("Usage: tsx sync-ltc-timecode.ts <source-wav-file>");
+    console.log("");
+    console.log("This script will:");
+    console.log(
+      "1. Extract LTC timecode from the source WAV file using ltcdump"
+    );
+    console.log("2. Find sibling WAV files in the same directory");
+    console.log(
+      "3. Update time_reference and creation_time metadata using bwfmetaedit"
+    );
+    console.log("4. Verify the changes using ffprobe");
+    console.log("");
+    console.log("Example:");
+    console.log("  tsx sync-ltc-timecode.ts example/Audio/250913_0009_MIX.wav");
+    process.exit(1);
+  }
+
+  const sourceFile = args[0];
+
+  if (!fs.existsSync(sourceFile)) {
+    console.error(`❌ Source file not found: ${sourceFile}`);
+    process.exit(1);
+  }
+
+  const ext = path.extname(sourceFile).toLowerCase();
+  if (ext !== ".wav") {
+    console.error(`❌ Source file must be a WAV file: ${sourceFile}`);
+    process.exit(1);
+  }
+
+  const syncTool = new LTCSyncTool(sourceFile);
+  syncTool.syncTimecode().catch((error) => {
+    console.error(`❌ Fatal error: ${error}`);
+    process.exit(1);
+  });
+}
+
+if (require.main === module) {
+  main();
+}
+
+export { LTCSyncTool };
