@@ -28,23 +28,41 @@ brew install ffmpeg
 ## Usage
 
 ```bash
-# Run the script
-npx tsx sync-ltc-timecode.ts <source-wav-file>
+# Run the script directly
+./sync-ltc-timecode.ts <source-wav-file-or-directory>
+
+# Or use npx
+npx tsx sync-ltc-timecode.ts <source-wav-file-or-directory>
 
 # Or use the npm script
-npm run sync-ltc <source-wav-file>
+npm run sync-ltc <source-wav-file-or-directory>
 
-# Example
-npx tsx sync-ltc-timecode.ts example/Audio/250913_0009_MIX.wav
+# Examples
+# Single file mode
+./sync-ltc-timecode.ts example/Audio/250913_0009_MIX.wav
+
+# Directory mode (processes all files ending in _3.wav)
+./sync-ltc-timecode.ts example/Audio/
 ```
 
 ## How it works
+
+### Single File Mode
 
 1. **LTC Extraction**: Uses `ltcdump` to extract LTC timecode data from the source WAV file
 2. **Sibling Detection**: Finds other WAV files in the same directory that share the same naming pattern
 3. **Metadata Calculation**: Calculates `time_reference` (in samples) and `creation_time` from the LTC data
 4. **Metadata Update**: Uses `bwfmetaedit` to update the metadata in all sibling files
 5. **Verification**: Uses `ffprobe` to verify the changes were applied correctly
+
+### Directory Mode
+
+1. **File Discovery**: Finds all WAV files ending in `_3.wav` in the specified directory
+2. **Batch Processing**: For each `_3.wav` file found:
+   - Extracts LTC timecode data
+   - Finds sibling files (same naming pattern)
+   - Updates metadata for all siblings
+   - Verifies the changes
 
 ## File Naming Convention
 

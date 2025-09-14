@@ -28,10 +28,17 @@ interface AudioFileInfo {
 class LTCSyncTool {
   private sourceFile: string;
   private siblingFiles: string[] = [];
+  private isDirectoryMode: boolean = false;
 
   constructor(sourceFile: string) {
     this.sourceFile = path.resolve(sourceFile);
-    this.findSiblingFiles();
+
+    // Check if input is a directory
+    if (fs.statSync(this.sourceFile).isDirectory()) {
+      this.isDirectoryMode = true;
+    } else {
+      this.findSiblingFiles();
+    }
   }
 
   private findSiblingFiles(): void {
@@ -60,6 +67,22 @@ class LTCSyncTool {
       `Found ${this.siblingFiles.length} sibling files:`,
       this.siblingFiles.map((f) => path.basename(f))
     );
+  }
+
+  private findSourceFilesInDirectory(): string[] {
+    const files = fs.readdirSync(this.sourceFile).filter((file) => {
+      const ext = path.extname(file).toLowerCase();
+      return ext === ".wav" && file.endsWith("_3.wav");
+    });
+
+    const sourceFiles = files.map((file) => path.join(this.sourceFile, file));
+
+    console.log(
+      `Found ${sourceFiles.length} source files ending in _3.wav:`,
+      sourceFiles.map((f) => path.basename(f))
+    );
+
+    return sourceFiles;
   }
 
   private isSiblingFile(sourceBase: string, targetBase: string): boolean {
@@ -314,33 +337,34 @@ class LTCSyncTool {
     }
   }
 
-  public async syncTimecode(): Promise<void> {
-    console.log(`🚀 Starting LTC timecode synchronization`);
-    console.log(`📁 Source file: ${this.sourceFile}`);
-    console.log(`📁 Sibling files: ${this.siblingFiles.length}`);
+  private async processSingleSourceFile(sourceFile: string): Promise<void> {
+    console.log(`\n🔍 Processing source file: ${path.basename(sourceFile)}`);
 
-    if (this.siblingFiles.length === 0) {
+    // Create a temporary instance for this source file
+    const tempTool = new LTCSyncTool(sourceFile);
+
+    if (tempTool.siblingFiles.length === 0) {
       console.log("⚠️  No sibling files found to update");
       return;
     }
 
     try {
       // Extract LTC data from source file
-      const frames = this.runLTCdump();
-      const referenceFrame = this.getFirstValidFrame(frames);
+      const frames = tempTool.runLTCdump();
+      const referenceFrame = tempTool.getFirstValidFrame(frames);
 
       // Calculate metadata values
-      const timeReference = this.calculateTimeReference(referenceFrame);
-      const creationTime = this.formatCreationTime(referenceFrame);
+      const timeReference = tempTool.calculateTimeReference(referenceFrame);
+      const creationTime = tempTool.formatCreationTime(referenceFrame);
 
       // Update each sibling file
-      for (const filePath of this.siblingFiles) {
+      for (const filePath of tempTool.siblingFiles) {
         try {
           // Show current metadata
-          this.verifyFileMetadata(filePath);
+          tempTool.verifyFileMetadata(filePath);
 
           // Update metadata
-          this.updateFileMetadata(
+          tempTool.updateFileMetadata(
             filePath,
             timeReference,
             creationTime,
@@ -348,7 +372,7 @@ class LTCSyncTool {
           );
 
           // Verify the update
-          this.verifyFileMetadata(filePath);
+          tempTool.verifyFileMetadata(filePath);
         } catch (error) {
           console.error(
             `❌ Failed to process ${path.basename(filePath)}: ${error}`
@@ -357,13 +381,88 @@ class LTCSyncTool {
         }
       }
 
-      console.log(`\n🎉 LTC timecode synchronization completed!`);
-      console.log(`📊 Updated ${this.siblingFiles.length} files with:`);
+      console.log(`✅ Completed processing ${path.basename(sourceFile)}`);
+      console.log(`📊 Updated ${tempTool.siblingFiles.length} files with:`);
       console.log(`   Time Reference: ${timeReference}`);
       console.log(`   Creation Time: ${creationTime}`);
     } catch (error) {
-      console.error(`❌ Synchronization failed: ${error}`);
-      process.exit(1);
+      console.error(
+        `❌ Failed to process ${path.basename(sourceFile)}: ${error}`
+      );
+      // Continue with other files
+    }
+  }
+
+  public async syncTimecode(): Promise<void> {
+    console.log(`🚀 Starting LTC timecode synchronization`);
+
+    if (this.isDirectoryMode) {
+      console.log(`📁 Directory mode: ${this.sourceFile}`);
+
+      const sourceFiles = this.findSourceFilesInDirectory();
+
+      if (sourceFiles.length === 0) {
+        console.log("⚠️  No files ending in _3.wav found in directory");
+        return;
+      }
+
+      // Process each source file
+      for (const sourceFile of sourceFiles) {
+        await this.processSingleSourceFile(sourceFile);
+      }
+
+      console.log(`\n🎉 LTC timecode synchronization completed!`);
+      console.log(`📊 Processed ${sourceFiles.length} source files`);
+    } else {
+      console.log(`📁 Source file: ${this.sourceFile}`);
+      console.log(`📁 Sibling files: ${this.siblingFiles.length}`);
+
+      if (this.siblingFiles.length === 0) {
+        console.log("⚠️  No sibling files found to update");
+        return;
+      }
+
+      try {
+        // Extract LTC data from source file
+        const frames = this.runLTCdump();
+        const referenceFrame = this.getFirstValidFrame(frames);
+
+        // Calculate metadata values
+        const timeReference = this.calculateTimeReference(referenceFrame);
+        const creationTime = this.formatCreationTime(referenceFrame);
+
+        // Update each sibling file
+        for (const filePath of this.siblingFiles) {
+          try {
+            // Show current metadata
+            this.verifyFileMetadata(filePath);
+
+            // Update metadata
+            this.updateFileMetadata(
+              filePath,
+              timeReference,
+              creationTime,
+              referenceFrame
+            );
+
+            // Verify the update
+            this.verifyFileMetadata(filePath);
+          } catch (error) {
+            console.error(
+              `❌ Failed to process ${path.basename(filePath)}: ${error}`
+            );
+            // Continue with other files
+          }
+        }
+
+        console.log(`\n🎉 LTC timecode synchronization completed!`);
+        console.log(`📊 Updated ${this.siblingFiles.length} files with:`);
+        console.log(`   Time Reference: ${timeReference}`);
+        console.log(`   Creation Time: ${creationTime}`);
+      } catch (error) {
+        console.error(`❌ Synchronization failed: ${error}`);
+        process.exit(1);
+      }
     }
   }
 }
@@ -373,7 +472,9 @@ function main() {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
-    console.log("Usage: tsx sync-ltc-timecode.ts <source-wav-file>");
+    console.log(
+      "Usage: tsx sync-ltc-timecode.ts <source-wav-file-or-directory>"
+    );
     console.log("");
     console.log("This script will:");
     console.log(
@@ -385,22 +486,32 @@ function main() {
     );
     console.log("4. Verify the changes using ffprobe");
     console.log("");
-    console.log("Example:");
+    console.log("Modes:");
+    console.log("  Single file: Process one WAV file and its siblings");
+    console.log(
+      "  Directory:   Process all files ending in _3.wav and their siblings"
+    );
+    console.log("");
+    console.log("Examples:");
     console.log("  tsx sync-ltc-timecode.ts example/Audio/250913_0009_MIX.wav");
+    console.log("  tsx sync-ltc-timecode.ts example/Audio/");
     process.exit(1);
   }
 
   const sourceFile = args[0];
 
   if (!fs.existsSync(sourceFile)) {
-    console.error(`❌ Source file not found: ${sourceFile}`);
+    console.error(`❌ Source file or directory not found: ${sourceFile}`);
     process.exit(1);
   }
 
-  const ext = path.extname(sourceFile).toLowerCase();
-  if (ext !== ".wav") {
-    console.error(`❌ Source file must be a WAV file: ${sourceFile}`);
-    process.exit(1);
+  const stat = fs.statSync(sourceFile);
+  if (stat.isFile()) {
+    const ext = path.extname(sourceFile).toLowerCase();
+    if (ext !== ".wav") {
+      console.error(`❌ Source file must be a WAV file: ${sourceFile}`);
+      process.exit(1);
+    }
   }
 
   const syncTool = new LTCSyncTool(sourceFile);
