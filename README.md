@@ -41,7 +41,7 @@ npm run sync-ltc <source-wav-file-or-directory>
 # Single file mode
 ./sync-ltc-timecode.ts example/Audio/250913_0009_MIX.wav
 
-# Directory mode (processes all files ending in _3.wav)
+# Directory mode (interactive pattern selection)
 ./sync-ltc-timecode.ts example/Audio/
 ```
 
@@ -57,12 +57,30 @@ npm run sync-ltc <source-wav-file-or-directory>
 
 ### Directory Mode
 
-1. **File Discovery**: Finds all WAV files ending in `_3.wav` in the specified directory
-2. **Batch Processing**: For each `_3.wav` file found:
+1. **Pattern Discovery**: Automatically discovers all file patterns in the directory (e.g., `_1-2`, `_3`, `_5-6`, `_MIX`)
+2. **Interactive Selection**: Prompts user to choose which pattern contains the timecode
+3. **Batch Processing**: For each file with the selected pattern:
    - Extracts LTC timecode data
    - Finds sibling files (same naming pattern)
    - Updates metadata for all siblings
    - Verifies the changes
+
+### Interactive Pattern Selection Example
+
+When you run the script in directory mode, you'll see:
+
+```
+🔍 Found 12 WAV files with the following patterns:
+
+  1. 1-2 (3 files)
+  2. 3 (3 files)
+  3. 5-6 (3 files)
+  4. MIX (3 files)
+
+Which pattern contains the timecode? Enter the number (1-4): 2
+
+✅ Selected pattern "3" with 3 files: [ '250906_0006_3.wav', '250906_0007_3.wav', '250906_0008_3.wav' ]
+```
 
 ## File Naming Convention
 

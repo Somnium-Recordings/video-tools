@@ -3,6 +3,7 @@
 import { execSync } from "child_process";
 import path from "path";
 import fs from "fs";
+import * as readline from "readline";
 
 interface LTCFrame {
   userBits: string;
@@ -69,20 +70,92 @@ class LTCSyncTool {
     );
   }
 
-  private findSourceFilesInDirectory(): string[] {
+  private async discoverFilePatterns(): Promise<string[]> {
     const files = fs.readdirSync(this.sourceFile).filter((file) => {
       const ext = path.extname(file).toLowerCase();
-      return ext === ".wav" && file.endsWith("_3.wav");
+      return ext === ".wav";
     });
 
-    const sourceFiles = files.map((file) => path.join(this.sourceFile, file));
+    // Extract patterns from filenames
+    const patterns = new Set<string>();
+    const patternFiles = new Map<string, string[]>();
+
+    for (const file of files) {
+      const baseName = path.basename(file, ".wav");
+      const parts = baseName.split("_");
+
+      if (parts.length >= 3) {
+        // Get the last part as the pattern (e.g., "1-2", "3", "5-6", "MIX")
+        const pattern = parts[parts.length - 1];
+        patterns.add(pattern);
+
+        if (!patternFiles.has(pattern)) {
+          patternFiles.set(pattern, []);
+        }
+        patternFiles.get(pattern)!.push(file);
+      }
+    }
+
+    // Convert to sorted array
+    const sortedPatterns = Array.from(patterns).sort();
 
     console.log(
-      `Found ${sourceFiles.length} source files ending in _3.wav:`,
+      `\n🔍 Found ${files.length} WAV files with the following patterns:`
+    );
+    console.log("");
+
+    sortedPatterns.forEach((pattern, index) => {
+      const fileCount = patternFiles.get(pattern)!.length;
+      console.log(`  ${index + 1}. ${pattern} (${fileCount} files)`);
+    });
+
+    console.log("");
+
+    // Prompt user to select pattern
+    const selectedPattern = await this.promptForPattern(sortedPatterns);
+
+    const sourceFiles = patternFiles
+      .get(selectedPattern)!
+      .map((file) => path.join(this.sourceFile, file));
+
+    console.log(
+      `\n✅ Selected pattern "${selectedPattern}" with ${sourceFiles.length} files:`,
       sourceFiles.map((f) => path.basename(f))
     );
 
     return sourceFiles;
+  }
+
+  private async promptForPattern(patterns: string[]): Promise<string> {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    return new Promise((resolve) => {
+      const askQuestion = () => {
+        rl.question(
+          "Which pattern contains the timecode? Enter the number (1-" +
+            patterns.length +
+            "): ",
+          (answer) => {
+            const choice = parseInt(answer);
+
+            if (choice >= 1 && choice <= patterns.length) {
+              rl.close();
+              resolve(patterns[choice - 1]);
+            } else {
+              console.log(
+                `❌ Please enter a number between 1 and ${patterns.length}`
+              );
+              askQuestion();
+            }
+          }
+        );
+      };
+
+      askQuestion();
+    });
   }
 
   private isSiblingFile(sourceBase: string, targetBase: string): boolean {
@@ -399,10 +472,10 @@ class LTCSyncTool {
     if (this.isDirectoryMode) {
       console.log(`📁 Directory mode: ${this.sourceFile}`);
 
-      const sourceFiles = this.findSourceFilesInDirectory();
+      const sourceFiles = await this.discoverFilePatterns();
 
       if (sourceFiles.length === 0) {
-        console.log("⚠️  No files ending in _3.wav found in directory");
+        console.log("⚠️  No files found with the selected pattern");
         return;
       }
 
@@ -489,7 +562,7 @@ function main() {
     console.log("Modes:");
     console.log("  Single file: Process one WAV file and its siblings");
     console.log(
-      "  Directory:   Process all files ending in _3.wav and their siblings"
+      "  Directory:   Interactive pattern selection - choose which file pattern contains timecode"
     );
     console.log("");
     console.log("Examples:");
