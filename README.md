@@ -29,15 +29,18 @@ brew install ffmpeg
 
 ```bash
 # Run the script directly
-./sync-ltc-timecode.ts <source-wav-file-or-directory>
+./sync-ltc-timecode.ts [source-wav-file-or-directory]
 
 # Or use npx
-npx tsx sync-ltc-timecode.ts <source-wav-file-or-directory>
+npx tsx sync-ltc-timecode.ts [source-wav-file-or-directory]
 
 # Or use the npm script
-npm run sync-ltc <source-wav-file-or-directory>
+npm run sync-ltc [source-wav-file-or-directory]
 
 # Examples
+# No arguments - interactive project selection
+./sync-ltc-timecode.ts
+
 # Single file mode
 ./sync-ltc-timecode.ts example/Audio/250913_0009_MIX.wav
 
@@ -65,6 +68,15 @@ npm run sync-ltc <source-wav-file-or-directory>
    - Updates metadata for all siblings
    - Verifies the changes
 
+### Project Selection Mode (No Arguments)
+
+When run without arguments, the script will:
+
+1. **Project Discovery**: Scans the parent directory for date-based project folders (YYYY-MM-DD-\*)
+2. **Interactive Selection**: Shows a numbered list of available projects (sorted by date, most recent first)
+3. **Audio Directory Check**: Verifies the selected project has an `Audio/` subdirectory
+4. **Automatic Processing**: Proceeds with directory mode using the Audio folder
+
 ### Interactive Pattern Selection Example
 
 When you run the script in directory mode, you'll see:
@@ -80,6 +92,35 @@ When you run the script in directory mode, you'll see:
 Which pattern contains the timecode? Enter the number (1-4): 2
 
 ✅ Selected pattern "3" with 3 files: [ '250906_0006_3.wav', '250906_0007_3.wav', '250906_0008_3.wav' ]
+```
+
+### Project Selection Example
+
+When you run the script without arguments, you'll see:
+
+```
+🚀 LTC Timecode Synchronization Tool
+
+🔍 Discovering project directories...
+
+📁 Found 12 project directories:
+
+  1. 2025-09-13-Baroeg-NL
+  2. 2025-09-05-Derestrict-CH
+  3. 2025-08-30-Inota-HU
+  4. 2025-08-16-Decibel-NL
+  5. 2025-08-10-TechnoSnobs-AZ
+  6. 2025-08-09-WORK-LA
+  7. 2025-08-01-Carnal-Slovenia
+  8. 2025-07-19-Dominator-NL
+  9. 2025-07-05-Astropolis-Brest
+  10. 2025-06-28-DoxArt-France
+  11. 2025-06-07-Harmony-of-Hardcore
+  12. 2025-05-09-Superbooth-Berlin
+
+Which project directory? Enter the number (1-12): 1
+✅ Selected project: 2025-09-13-Baroeg-NL
+📁 Using Audio directory: /Volumes/Projects/Video/2025-09-13-Baroeg-NL/Audio
 ```
 
 ## File Naming Convention

@@ -540,35 +540,114 @@ class LTCSyncTool {
   }
 }
 
+// Project directory discovery
+async function discoverProjectDirectories(): Promise<string[]> {
+  const currentDir = process.cwd();
+  const parentDir = path.dirname(currentDir);
+
+  try {
+    const entries = fs.readdirSync(parentDir, { withFileTypes: true });
+    const projectDirs = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => {
+        // Only show date-based project directories
+        return name.match(/^\d{4}-\d{2}-\d{2}-/);
+      })
+      .sort((a, b) => {
+        // Sort in reverse chronological order (most recent first)
+        return b.localeCompare(a);
+      });
+
+    return projectDirs.map((name) => path.join(parentDir, name));
+  } catch (error) {
+    console.error(`❌ Error reading parent directory: ${error}`);
+    return [];
+  }
+}
+
+async function promptForProjectDirectory(): Promise<string | null> {
+  console.log("🔍 Discovering project directories...");
+
+  const projectDirs = await discoverProjectDirectories();
+
+  if (projectDirs.length === 0) {
+    console.log("❌ No project directories found in parent directory");
+    return null;
+  }
+
+  console.log(`\n📁 Found ${projectDirs.length} project directories:`);
+  console.log("");
+
+  projectDirs.forEach((dir, index) => {
+    const dirName = path.basename(dir);
+    console.log(`  ${index + 1}. ${dirName}`);
+  });
+
+  console.log("");
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  return new Promise((resolve) => {
+    const askQuestion = () => {
+      rl.question(
+        "Which project directory? Enter the number (1-" +
+          projectDirs.length +
+          "): ",
+        (answer) => {
+          const choice = parseInt(answer);
+
+          if (choice >= 1 && choice <= projectDirs.length) {
+            rl.close();
+            resolve(projectDirs[choice - 1]);
+          } else {
+            console.log(
+              `❌ Please enter a number between 1 and ${projectDirs.length}`
+            );
+            askQuestion();
+          }
+        }
+      );
+    };
+
+    askQuestion();
+  });
+}
+
 // CLI interface
-function main() {
+async function main() {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
-    console.log(
-      "Usage: tsx sync-ltc-timecode.ts <source-wav-file-or-directory>"
-    );
+    // No arguments provided - prompt for project directory
+    console.log("🚀 LTC Timecode Synchronization Tool");
     console.log("");
-    console.log("This script will:");
-    console.log(
-      "1. Extract LTC timecode from the source WAV file using ltcdump"
-    );
-    console.log("2. Find sibling WAV files in the same directory");
-    console.log(
-      "3. Update time_reference and creation_time metadata using bwfmetaedit"
-    );
-    console.log("4. Verify the changes using ffprobe");
+
+    const projectDir = await promptForProjectDirectory();
+    if (!projectDir) {
+      console.log("❌ No project selected. Exiting.");
+      process.exit(1);
+    }
+
+    // Check if Audio subdirectory exists
+    const audioDir = path.join(projectDir, "Audio");
+    if (!fs.existsSync(audioDir)) {
+      console.log(
+        `❌ Audio directory not found in ${path.basename(projectDir)}`
+      );
+      console.log("Expected directory structure: <project>/Audio/");
+      process.exit(1);
+    }
+
+    console.log(`✅ Selected project: ${path.basename(projectDir)}`);
+    console.log(`📁 Using Audio directory: ${audioDir}`);
     console.log("");
-    console.log("Modes:");
-    console.log("  Single file: Process one WAV file and its siblings");
-    console.log(
-      "  Directory:   Interactive pattern selection - choose which file pattern contains timecode"
-    );
-    console.log("");
-    console.log("Examples:");
-    console.log("  tsx sync-ltc-timecode.ts example/Audio/250913_0009_MIX.wav");
-    console.log("  tsx sync-ltc-timecode.ts example/Audio/");
-    process.exit(1);
+
+    // Use the Audio directory as the target
+    args[0] = audioDir;
   }
 
   const sourceFile = args[0];
@@ -595,7 +674,10 @@ function main() {
 }
 
 if (require.main === module) {
-  main();
+  main().catch((error) => {
+    console.error(`❌ Fatal error: ${error}`);
+    process.exit(1);
+  });
 }
 
 export { LTCSyncTool };
