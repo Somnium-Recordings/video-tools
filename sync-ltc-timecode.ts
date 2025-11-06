@@ -546,20 +546,48 @@ async function discoverProjectDirectories(): Promise<string[]> {
   const parentDir = path.dirname(currentDir);
 
   try {
+    const projectDirs: string[] = [];
+
+    // Find direct project directories in parent dir
     const entries = fs.readdirSync(parentDir, { withFileTypes: true });
-    const projectDirs = entries
+    const directProjects = entries
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .filter((name) => {
         // Only show date-based project directories
         return name.match(/^\d{4}-\d{2}-\d{2}-/);
       })
-      .sort((a, b) => {
-        // Sort in reverse chronological order (most recent first)
-        return b.localeCompare(a);
-      });
+      .map((name) => path.join(parentDir, name));
 
-    return projectDirs.map((name) => path.join(parentDir, name));
+    projectDirs.push(...directProjects);
+
+    // Find projects under _Others/<artist-name>/<project-directory>
+    const othersDir = path.join(parentDir, "_Others");
+    if (fs.existsSync(othersDir)) {
+      const artistDirs = fs.readdirSync(othersDir, { withFileTypes: true });
+
+      for (const artistDir of artistDirs) {
+        if (artistDir.isDirectory()) {
+          const artistPath = path.join(othersDir, artistDir.name);
+          const artistProjects = fs
+            .readdirSync(artistPath, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .filter((entry) => entry.name.match(/^\d{4}-\d{2}-\d{2}-/))
+            .map((entry) => path.join(artistPath, entry.name));
+
+          projectDirs.push(...artistProjects);
+        }
+      }
+    }
+
+    // Sort all projects in reverse chronological order (most recent first)
+    projectDirs.sort((a, b) => {
+      const aName = path.basename(a);
+      const bName = path.basename(b);
+      return bName.localeCompare(aName);
+    });
+
+    return projectDirs;
   } catch (error) {
     console.error(`❌ Error reading parent directory: ${error}`);
     return [];
@@ -579,9 +607,17 @@ async function promptForProjectDirectory(): Promise<string | null> {
   console.log(`\n📁 Found ${projectDirs.length} project directories:`);
   console.log("");
 
+  const parentDir = path.dirname(process.cwd());
   projectDirs.forEach((dir, index) => {
     const dirName = path.basename(dir);
-    console.log(`  ${index + 1}. ${dirName}`);
+    const parentName = path.basename(path.dirname(dir));
+
+    // Check if this project is under _Others/<artist-name>/
+    if (path.dirname(path.dirname(dir)) === path.join(parentDir, "_Others")) {
+      console.log(`  ${index + 1}. ${dirName} (${parentName})`);
+    } else {
+      console.log(`  ${index + 1}. ${dirName}`);
+    }
   });
 
   console.log("");
