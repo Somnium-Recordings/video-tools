@@ -183,7 +183,7 @@ class LTCSyncTool {
     try {
       const output = execSync(`ltcdump "${this.sourceFile}" -vv`, {
         encoding: "utf8",
-        maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+        maxBuffer: 1024 * 1024 * 50, // 10MB buffer
       });
 
       const lines = output
